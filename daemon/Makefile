@@ -19,6 +19,7 @@ DAEMON_SRC :=					\
 	daemon/lightningd.c			\
 	daemon/netaddr.c			\
 	daemon/peer.c				\
+	daemon/privkey.c			\
 	daemon/timeout.c
 DAEMON_OBJS := $(DAEMON_SRC:.c=.o)
 
@@ -37,6 +38,7 @@ DAEMON_HEADERS :=				\
 	daemon/log.h				\
 	daemon/netaddr.h			\
 	daemon/peer.h				\
+	daemon/privkey.h			\
 	daemon/pseudorand.h			\
 	daemon/timeout.h
 

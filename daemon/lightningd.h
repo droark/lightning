@@ -25,5 +25,8 @@ struct lightningd_state {
 
 	/* Crypto tables for global use. */
 	secp256k1_context *secpctx;
+
+	/* This is us. */
+	secp256k1_pubkey id;
 };
 #endif /* LIGHTNING_DAEMON_LIGHTNING_H */
