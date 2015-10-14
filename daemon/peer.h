@@ -14,6 +14,12 @@ struct peer {
 	/* The other end's address. */
 	struct netaddr addr;
 
+	/* Current received packet. */
+	struct pkt *inpkt;
+	
+	/* Current ongoing packetflow */
+	struct io_data *io_data;
+	
 	/* What happened. */
 	struct log *log;
 };

@@ -1,9 +1,12 @@
+#include "cryptopkt.h"
 #include "dns.h"
 #include "jsonrpc.h"
 #include "lightningd.h"
 #include "log.h"
 #include "peer.h"
+#include "pkt.h"
 #include <arpa/inet.h>
+#include <ccan/endian/endian.h>
 #include <ccan/io/io.h>
 #include <ccan/noerr/noerr.h>
 #include <ccan/short_types/short_types.h>
@@ -14,6 +17,30 @@
 #include <stdlib.h>
 #include <sys/socket.h>
 #include <sys/types.h>
+
+/* Send and receive (encrypted) hello message. */
+static struct io_plan *peer_test_check(struct io_conn *conn, struct peer *peer)
+{
+	if (le32_to_cpu(peer->inpkt->len) != 6)
+		fatal("Bad packet len %u", le32_to_cpu(peer->inpkt->len));
+	if (memcmp(peer->inpkt->data, "hello", 6) != 0)
+		fatal("Bad packet '%.6s'", peer->inpkt->data);
+	log_info(peer->log, "Successful hello!");
+	return io_close(conn);
+}
+
+static struct io_plan *peer_test_read(struct io_conn *conn, struct peer *peer)
+{
+	return peer_read_packet(conn, peer, &peer->inpkt, peer_test_check);
+}
+
+static struct io_plan *peer_test(struct io_conn *conn, struct peer *peer)
+{
+	struct pkt *p = (struct pkt *)tal_arr(conn, u8, sizeof(*p) + 6);
+	p->len = cpu_to_le32(6);
+	memcpy(p->data, "hello", 6);
+	return peer_write_packet(conn, peer, p, peer_test_read);
+}
 
 static u16 get_port(const struct netaddr *addr)
 {
@@ -46,6 +73,7 @@ static struct peer *new_peer(struct lightningd_state *state,
 	peer->state = state;
 	peer->addr.type = addr_type;
 	peer->addr.protocol = addr_protocol;
+	peer->io_data = NULL;
 
 	/* FIXME: Attach IO logging for this peer. */
 	tal_add_destructor(peer, destroy_peer);
@@ -81,7 +109,7 @@ struct io_plan *peer_connected_out(struct io_conn *conn,
 		return io_close(conn);
 	}
 	log_info(peer->log, "Connected out to %s:%s", name, port);
-	return io_write(conn, "Hello!", 6, io_close_cb, NULL);
+	return peer_crypto_setup(conn, peer, peer_test);
 }
 
 static struct io_plan *peer_connected_in(struct io_conn *conn,
@@ -91,8 +119,9 @@ static struct io_plan *peer_connected_in(struct io_conn *conn,
 				     "in");
 	if (!peer)
 		return io_close(conn);
-	
-	return io_write(conn, "Hello!", 6, io_close_cb, NULL);
+
+	log_info(peer->log, "Peer connected in");
+	return peer_crypto_setup(conn, peer, peer_test);
 }
 
 static int make_listen_fd(struct lightningd_state *state,
