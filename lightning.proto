@@ -229,3 +229,7 @@ message pkt {
     error error = 40;
   }
 }
+
+// Introductory data.
+message optdata {
+}

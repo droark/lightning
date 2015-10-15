@@ -38,6 +38,7 @@ typedef struct _CloseChannelComplete CloseChannelComplete;
 typedef struct _CloseChannelAck CloseChannelAck;
 typedef struct _Error Error;
 typedef struct _Pkt Pkt;
+typedef struct _Optdata Optdata;
 
 
 /* --- enums --- */
@@ -563,6 +564,18 @@ struct  _Pkt
     , PKT__PKT__NOT_SET, {} }
 
 
+/*
+ * Introductory data.
+ */
+struct  _Optdata
+{
+  ProtobufCMessage base;
+};
+#define OPTDATA__INIT \
+ { PROTOBUF_C_MESSAGE_INIT (&optdata__descriptor) \
+     }
+
+
 /* Sha256Hash methods */
 void   sha256_hash__init
                      (Sha256Hash         *message);
@@ -1000,6 +1013,25 @@ Pkt *
 void   pkt__free_unpacked
                      (Pkt *message,
                       ProtobufCAllocator *allocator);
+/* Optdata methods */
+void   optdata__init
+                     (Optdata         *message);
+size_t optdata__get_packed_size
+                     (const Optdata   *message);
+size_t optdata__pack
+                     (const Optdata   *message,
+                      uint8_t             *out);
+size_t optdata__pack_to_buffer
+                     (const Optdata   *message,
+                      ProtobufCBuffer     *buffer);
+Optdata *
+       optdata__unpack
+                     (ProtobufCAllocator  *allocator,
+                      size_t               len,
+                      const uint8_t       *data);
+void   optdata__free_unpacked
+                     (Optdata *message,
+                      ProtobufCAllocator *allocator);
 /* --- per-message closures --- */
 
 typedef void (*Sha256Hash_Closure)
@@ -1071,6 +1103,9 @@ typedef void (*Error_Closure)
 typedef void (*Pkt_Closure)
                  (const Pkt *message,
                   void *closure_data);
+typedef void (*Optdata_Closure)
+                 (const Optdata *message,
+                  void *closure_data);
 
 /* --- services --- */
 
@@ -1101,6 +1136,7 @@ extern const ProtobufCMessageDescriptor close_channel_complete__descriptor;
 extern const ProtobufCMessageDescriptor close_channel_ack__descriptor;
 extern const ProtobufCMessageDescriptor error__descriptor;
 extern const ProtobufCMessageDescriptor pkt__descriptor;
+extern const ProtobufCMessageDescriptor optdata__descriptor;
 
 PROTOBUF_C__END_DECLS
 

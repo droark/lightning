@@ -996,6 +996,49 @@ void   pkt__free_unpacked
   assert(message->base.descriptor == &pkt__descriptor);
   protobuf_c_message_free_unpacked ((ProtobufCMessage*)message, allocator);
 }
+void   optdata__init
+                     (Optdata         *message)
+{
+  static Optdata init_value = OPTDATA__INIT;
+  *message = init_value;
+}
+size_t optdata__get_packed_size
+                     (const Optdata *message)
+{
+  assert(message->base.descriptor == &optdata__descriptor);
+  return protobuf_c_message_get_packed_size ((const ProtobufCMessage*)(message));
+}
+size_t optdata__pack
+                     (const Optdata *message,
+                      uint8_t       *out)
+{
+  assert(message->base.descriptor == &optdata__descriptor);
+  return protobuf_c_message_pack ((const ProtobufCMessage*)message, out);
+}
+size_t optdata__pack_to_buffer
+                     (const Optdata *message,
+                      ProtobufCBuffer *buffer)
+{
+  assert(message->base.descriptor == &optdata__descriptor);
+  return protobuf_c_message_pack_to_buffer ((const ProtobufCMessage*)message, buffer);
+}
+Optdata *
+       optdata__unpack
+                     (ProtobufCAllocator  *allocator,
+                      size_t               len,
+                      const uint8_t       *data)
+{
+  return (Optdata *)
+     protobuf_c_message_unpack (&optdata__descriptor,
+                                allocator, len, data);
+}
+void   optdata__free_unpacked
+                     (Optdata *message,
+                      ProtobufCAllocator *allocator)
+{
+  assert(message->base.descriptor == &optdata__descriptor);
+  protobuf_c_message_free_unpacked ((ProtobufCMessage*)message, allocator);
+}
 static const ProtobufCFieldDescriptor sha256_hash__field_descriptors[4] =
 {
   {
@@ -2506,5 +2549,23 @@ const ProtobufCMessageDescriptor pkt__descriptor =
   pkt__field_indices_by_name,
   4,  pkt__number_ranges,
   (ProtobufCMessageInit) pkt__init,
+  NULL,NULL,NULL    /* reserved[123] */
+};
+#define optdata__field_descriptors NULL
+#define optdata__field_indices_by_name NULL
+#define optdata__number_ranges NULL
+const ProtobufCMessageDescriptor optdata__descriptor =
+{
+  PROTOBUF_C__MESSAGE_DESCRIPTOR_MAGIC,
+  "optdata",
+  "Optdata",
+  "Optdata",
+  "",
+  sizeof(Optdata),
+  0,
+  optdata__field_descriptors,
+  optdata__field_indices_by_name,
+  0,  optdata__number_ranges,
+  (ProtobufCMessageInit) optdata__init,
   NULL,NULL,NULL    /* reserved[123] */
 };

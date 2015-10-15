@@ -1,4 +1,5 @@
 #include "cryptopkt.h"
+#include "lightning.pb-c.h"
 #include "lightningd.h"
 #include "log.h"
 #include "peer.h"
@@ -318,6 +319,7 @@ static struct io_plan *check_proof(struct io_conn *conn, struct peer *peer)
 	struct sha256 sha;
 	secp256k1_ecdsa_signature sig;
 	struct io_plan *(*cb)(struct io_conn *, struct peer *);
+	size_t optlen;
 
 	if (peer->inpkt_len < SESSION_PROOF_BASE_SIZE) {
 		log_unusual(peer->log, "Underlength proof packet %zu",
@@ -351,7 +353,28 @@ static struct io_plan *check_proof(struct io_conn *conn, struct peer *peer)
 		return io_close(conn);
 	}
 
-	/* FIXME: Parse optdata! */
+	optlen = peer->inpkt_len - SESSION_PROOF_BASE_SIZE;
+	log_debug(peer->log, "Optdata length %zu", optlen);
+	if (optlen) {
+		size_t i;
+		Optdata *o;
+
+		o = optdata__unpack(NULL, optlen, proof->optdata);
+		if (!o) {
+			log_unusual(peer->log, "Bad optdata length %zu", optlen);
+			return io_close(conn);
+		}
+		for (i = 0; i < o->base.n_unknown_fields; i++) {
+			log_debug(peer->log, "Unknown optdata %u",
+				  o->base.unknown_fields[i].tag);
+			/* Odd is OK */
+			if (o->base.unknown_fields[i].tag & 1)
+				continue;
+			log_unusual(peer->log, "Unknown optdata field %u",
+				    o->base.unknown_fields[i].tag);
+			return io_close(conn);
+		}
+	}
 
 	/* All complete, return to caller. */
 	cb = neg->cb;
