@@ -33,12 +33,11 @@ struct crypto_pkt {
 
 /* First encrypted packet says who we are and prove that it's us */
 struct session_proof {
-	/* Signature of all the below using pubkey (FIXME: Serialize!) */
+	/* Signature of all the below, then their session key (as random
+	 * nonce to avoid replay) using pubkey (FIXME: Serialize!) */
 	u8 signature[64];
 	/* My node's public key (ie. ID). */
 	u8 pubkey[33];
-	/* Your session key, to avoid replay. */
-	u8 sessionkey[33];
 	/* Optional protobuf. */
 	u8 optdata[];
 };
@@ -56,7 +55,7 @@ struct key_negotiate {
 };
 
 /* ARM loves to add padding to structs; be paranoid! */ 
-#define SESSION_PROOF_BASE_SIZE (64 + 33 + 33)
+#define SESSION_PROOF_BASE_SIZE (64 + 33)
 
 #define ENCKEY_SEED 0
 #define HMACKEY_SEED 1
@@ -316,6 +315,7 @@ static struct io_plan *check_proof(struct io_conn *conn, struct peer *peer)
 	struct key_negotiate *neg = peer->io_data->neg;
 	struct session_proof *proof = peer->inpkt;
 	secp256k1_pubkey theirid;
+	struct sha256_ctx ctx;
 	struct sha256 sha;
 	secp256k1_ecdsa_signature sig;
 	struct io_plan *(*cb)(struct io_conn *, struct peer *);
@@ -334,17 +334,14 @@ static struct io_plan *check_proof(struct io_conn *conn, struct peer *peer)
 		return io_close(conn);
 	}
 
-	/* They should have sent back our session pubkey */
-	BUILD_ASSERT(sizeof(neg->our_sessionpubkey)==sizeof(proof->sessionkey));
-	if (memcmp(neg->our_sessionpubkey, proof->sessionkey,
-		   sizeof(proof->sessionkey)) != 0) {
-		/* FIXME: Dump key in this case. */
-		log_unusual(peer->log, "Bad sessionkey copy");
-		return io_close(conn);
-	}
+	/* Signature covers pubkey, optdata and *our* session key. */
+	sha256_init(&ctx);
+	sha256_update(&ctx, (char *)proof + sizeof(proof->signature),
+		      peer->inpkt_len - sizeof(proof->signature));
+	sha256_update(&ctx, neg->our_sessionpubkey,
+		      sizeof(neg->our_sessionpubkey));
+	sha256_done(&ctx, &sha);
 
-	sha256(&sha, (char *)proof + sizeof(proof->signature),
-	       peer->inpkt_len - sizeof(proof->signature));
 	/* FIXME: deserialize! */
 	memcpy(&sig, proof->signature, sizeof(sig));
 	if (!secp256k1_ecdsa_verify(peer->state->secpctx, &sig, sha.u.u8,
@@ -395,6 +392,7 @@ static struct io_plan *keys_exchanged(struct io_conn *conn, struct peer *peer)
 	struct {
 		struct session_proof proof;
 		u8 optdata[100];
+		u8 their_sessionkey[33];
 	} s;
 	struct key_negotiate *neg = peer->io_data->neg;
 
@@ -427,10 +425,6 @@ static struct io_plan *keys_exchanged(struct io_conn *conn, struct peer *peer)
 				      s.proof.pubkey, &outlen, &peer->state->id,
 				      SECP256K1_EC_COMPRESSED);
 	assert(outlen == sizeof(s.proof.pubkey));
-	BUILD_ASSERT(sizeof(s.proof.sessionkey)
-		     == sizeof(neg->their_sessionpubkey));
-	memcpy(s.proof.sessionkey, neg->their_sessionpubkey,
-	       sizeof(s.proof.sessionkey));
 
 	/* This is the non-padded size. */
 	BUILD_ASSERT(SESSION_PROOF_BASE_SIZE
@@ -453,9 +447,12 @@ static struct io_plan *keys_exchanged(struct io_conn *conn, struct peer *peer)
 	}
 #endif
 
+	/* Signature covers their session key too (but it's not sent) */
+	memcpy((char *)&s.proof + SESSION_PROOF_BASE_SIZE + optlen,
+	       neg->their_sessionpubkey, sizeof(neg->their_sessionpubkey));
 	privkey_sign(peer, (char *)&s.proof + sizeof(s.proof.signature),
 		     SESSION_PROOF_BASE_SIZE - sizeof(s.proof.signature)
-		     + optlen,
+		     + optlen + sizeof(neg->their_sessionpubkey),
 		     s.proof.signature);
 
 	return peer_write_packet(conn, peer, &s,
