@@ -1039,6 +1039,49 @@ void   optdata__free_unpacked
   assert(message->base.descriptor == &optdata__descriptor);
   protobuf_c_message_free_unpacked ((ProtobufCMessage*)message, allocator);
 }
+void   test_optdata__init
+                     (TestOptdata         *message)
+{
+  static TestOptdata init_value = TEST_OPTDATA__INIT;
+  *message = init_value;
+}
+size_t test_optdata__get_packed_size
+                     (const TestOptdata *message)
+{
+  assert(message->base.descriptor == &test_optdata__descriptor);
+  return protobuf_c_message_get_packed_size ((const ProtobufCMessage*)(message));
+}
+size_t test_optdata__pack
+                     (const TestOptdata *message,
+                      uint8_t       *out)
+{
+  assert(message->base.descriptor == &test_optdata__descriptor);
+  return protobuf_c_message_pack ((const ProtobufCMessage*)message, out);
+}
+size_t test_optdata__pack_to_buffer
+                     (const TestOptdata *message,
+                      ProtobufCBuffer *buffer)
+{
+  assert(message->base.descriptor == &test_optdata__descriptor);
+  return protobuf_c_message_pack_to_buffer ((const ProtobufCMessage*)message, buffer);
+}
+TestOptdata *
+       test_optdata__unpack
+                     (ProtobufCAllocator  *allocator,
+                      size_t               len,
+                      const uint8_t       *data)
+{
+  return (TestOptdata *)
+     protobuf_c_message_unpack (&test_optdata__descriptor,
+                                allocator, len, data);
+}
+void   test_optdata__free_unpacked
+                     (TestOptdata *message,
+                      ProtobufCAllocator *allocator)
+{
+  assert(message->base.descriptor == &test_optdata__descriptor);
+  protobuf_c_message_free_unpacked ((ProtobufCMessage*)message, allocator);
+}
 static const ProtobufCFieldDescriptor sha256_hash__field_descriptors[4] =
 {
   {
@@ -2567,5 +2610,56 @@ const ProtobufCMessageDescriptor optdata__descriptor =
   optdata__field_indices_by_name,
   0,  optdata__number_ranges,
   (ProtobufCMessageInit) optdata__init,
+  NULL,NULL,NULL    /* reserved[123] */
+};
+static const ProtobufCFieldDescriptor test_optdata__field_descriptors[2] =
+{
+  {
+    "oddfield",
+    1,
+    PROTOBUF_C_LABEL_OPTIONAL,
+    PROTOBUF_C_TYPE_BOOL,
+    offsetof(TestOptdata, has_oddfield),
+    offsetof(TestOptdata, oddfield),
+    NULL,
+    NULL,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+  {
+    "evenfield",
+    2,
+    PROTOBUF_C_LABEL_OPTIONAL,
+    PROTOBUF_C_TYPE_BOOL,
+    offsetof(TestOptdata, has_evenfield),
+    offsetof(TestOptdata, evenfield),
+    NULL,
+    NULL,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+};
+static const unsigned test_optdata__field_indices_by_name[] = {
+  1,   /* field[1] = evenfield */
+  0,   /* field[0] = oddfield */
+};
+static const ProtobufCIntRange test_optdata__number_ranges[1 + 1] =
+{
+  { 1, 0 },
+  { 0, 2 }
+};
+const ProtobufCMessageDescriptor test_optdata__descriptor =
+{
+  PROTOBUF_C__MESSAGE_DESCRIPTOR_MAGIC,
+  "test_optdata",
+  "TestOptdata",
+  "TestOptdata",
+  "",
+  sizeof(TestOptdata),
+  2,
+  test_optdata__field_descriptors,
+  test_optdata__field_indices_by_name,
+  1,  test_optdata__number_ranges,
+  (ProtobufCMessageInit) test_optdata__init,
   NULL,NULL,NULL    /* reserved[123] */
 };

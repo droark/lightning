@@ -233,3 +233,9 @@ message pkt {
 // Introductory data.
 message optdata {
 }
+
+// For testing.
+message test_optdata {
+  optional bool oddfield = 1;
+  optional bool evenfield = 2;
+}

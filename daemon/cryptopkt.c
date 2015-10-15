@@ -391,8 +391,11 @@ static struct io_plan *keys_exchanged(struct io_conn *conn, struct peer *peer)
 {
 	u8 shared_secret[32];
 	secp256k1_pubkey sessionkey;
-	size_t outlen;
-	struct session_proof proof;
+	size_t outlen, optlen = 0;
+	struct {
+		struct session_proof proof;
+		u8 optdata[100];
+	} s;
 	struct key_negotiate *neg = peer->io_data->neg;
 
 	if (!secp256k1_ec_pubkey_parse(peer->state->secpctx, &sessionkey,
@@ -421,24 +424,42 @@ static struct io_plan *keys_exchanged(struct io_conn *conn, struct peer *peer)
 
 	/* Now construct, sign and send the proof. */
 	secp256k1_ec_pubkey_serialize(peer->state->secpctx,
-				      proof.pubkey, &outlen, &peer->state->id,
+				      s.proof.pubkey, &outlen, &peer->state->id,
 				      SECP256K1_EC_COMPRESSED);
-	assert(outlen == sizeof(proof.pubkey));
-	BUILD_ASSERT(sizeof(proof.sessionkey)
+	assert(outlen == sizeof(s.proof.pubkey));
+	BUILD_ASSERT(sizeof(s.proof.sessionkey)
 		     == sizeof(neg->their_sessionpubkey));
-	memcpy(proof.sessionkey, neg->their_sessionpubkey,
-	       sizeof(proof.sessionkey));
+	memcpy(s.proof.sessionkey, neg->their_sessionpubkey,
+	       sizeof(s.proof.sessionkey));
 
 	/* This is the non-padded size. */
 	BUILD_ASSERT(SESSION_PROOF_BASE_SIZE
 		     == offsetof(struct session_proof, optdata));
 
-	privkey_sign(peer, (char *)&proof + sizeof(proof.signature),
-		     SESSION_PROOF_BASE_SIZE - sizeof(proof.signature),
-		     proof.signature);
+#ifdef TEST_OPTDATA
+	{
+		TestOptdata o = TEST_OPTDATA__INIT;
 	
-	/* We don't send any optdata */
-	return peer_write_packet(conn, peer, &proof, SESSION_PROOF_BASE_SIZE,
+		o.has_oddfield = true;
+		o.oddfield = true;
+#ifdef TEST_BAD_OPTDATA
+		o.has_evenfield = true;
+		o.evenfield = false;
+#endif
+		optlen = test_optdata__pack(&o,
+					    (u8 *)&s.proof
+					    + SESSION_PROOF_BASE_SIZE);
+		assert(optlen < 100);
+	}
+#endif
+
+	privkey_sign(peer, (char *)&s.proof + sizeof(s.proof.signature),
+		     SESSION_PROOF_BASE_SIZE - sizeof(s.proof.signature)
+		     + optlen,
+		     s.proof.signature);
+
+	return peer_write_packet(conn, peer, &s,
+				 SESSION_PROOF_BASE_SIZE + optlen,
 				 receive_proof);
 }
 

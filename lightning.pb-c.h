@@ -39,6 +39,7 @@ typedef struct _CloseChannelAck CloseChannelAck;
 typedef struct _Error Error;
 typedef struct _Pkt Pkt;
 typedef struct _Optdata Optdata;
+typedef struct _TestOptdata TestOptdata;
 
 
 /* --- enums --- */
@@ -576,6 +577,22 @@ struct  _Optdata
      }
 
 
+/*
+ * For testing.
+ */
+struct  _TestOptdata
+{
+  ProtobufCMessage base;
+  protobuf_c_boolean has_oddfield;
+  protobuf_c_boolean oddfield;
+  protobuf_c_boolean has_evenfield;
+  protobuf_c_boolean evenfield;
+};
+#define TEST_OPTDATA__INIT \
+ { PROTOBUF_C_MESSAGE_INIT (&test_optdata__descriptor) \
+    , 0,0, 0,0 }
+
+
 /* Sha256Hash methods */
 void   sha256_hash__init
                      (Sha256Hash         *message);
@@ -1032,6 +1049,25 @@ Optdata *
 void   optdata__free_unpacked
                      (Optdata *message,
                       ProtobufCAllocator *allocator);
+/* TestOptdata methods */
+void   test_optdata__init
+                     (TestOptdata         *message);
+size_t test_optdata__get_packed_size
+                     (const TestOptdata   *message);
+size_t test_optdata__pack
+                     (const TestOptdata   *message,
+                      uint8_t             *out);
+size_t test_optdata__pack_to_buffer
+                     (const TestOptdata   *message,
+                      ProtobufCBuffer     *buffer);
+TestOptdata *
+       test_optdata__unpack
+                     (ProtobufCAllocator  *allocator,
+                      size_t               len,
+                      const uint8_t       *data);
+void   test_optdata__free_unpacked
+                     (TestOptdata *message,
+                      ProtobufCAllocator *allocator);
 /* --- per-message closures --- */
 
 typedef void (*Sha256Hash_Closure)
@@ -1106,6 +1142,9 @@ typedef void (*Pkt_Closure)
 typedef void (*Optdata_Closure)
                  (const Optdata *message,
                   void *closure_data);
+typedef void (*TestOptdata_Closure)
+                 (const TestOptdata *message,
+                  void *closure_data);
 
 /* --- services --- */
 
@@ -1137,6 +1176,7 @@ extern const ProtobufCMessageDescriptor close_channel_ack__descriptor;
 extern const ProtobufCMessageDescriptor error__descriptor;
 extern const ProtobufCMessageDescriptor pkt__descriptor;
 extern const ProtobufCMessageDescriptor optdata__descriptor;
+extern const ProtobufCMessageDescriptor test_optdata__descriptor;
 
 PROTOBUF_C__END_DECLS
 
