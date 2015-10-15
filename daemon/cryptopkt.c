@@ -30,18 +30,32 @@ struct crypto_pkt {
 	u8 data[];
 };
 
-/* We open/restart a conversation with this. */
-struct intro {
+/* First encrypted packet says who we are and prove that it's us */
+struct session_proof {
+	/* Signature of all the below using pubkey (FIXME: Serialize!) */
+	u8 signature[64];
 	/* My node's public key (ie. ID). */
 	u8 pubkey[33];
-	/* Temporary key for ECDH */
+	/* Your session key, to avoid replay. */
 	u8 sessionkey[33];
-	/* Signature of all the above (FIXME: Serialize!) */
-	u8 signature[64];
+	/* Optional protobuf. */
+	u8 optdata[];
 };
 
-/* ARM loves to add padding to structs. :( */ 
-#define INTRO_SIZE (33 + 33 + 64)
+/* Temporary structure for negotiation (peer->io_data->neg) */
+struct key_negotiate {
+	/* Our session secret key. */
+	u8 seckey[32];
+
+	/* Our pubkey, their pubkey. */
+	u8 our_sessionpubkey[33], their_sessionpubkey[33];
+
+	/* Callback once it's all done. */
+	struct io_plan *(*cb)(struct io_conn *, struct peer *);
+};
+
+/* ARM loves to add padding to structs; be paranoid! */ 
+#define SESSION_PROOF_BASE_SIZE (64 + 33 + 33)
 
 #define ENCKEY_SEED 0
 #define HMACKEY_SEED 1
@@ -134,6 +148,9 @@ struct io_data {
 	/* Header we're currently reading. */
 	size_t len_in;
 	struct crypto_pkt hdr_in;
+
+	/* For negotiation phase. */
+	struct key_negotiate *neg;
 };
 
 static void *decrypt_pkt(struct peer *peer, struct crypto_pkt *cpkt, size_t *len)
@@ -180,7 +197,7 @@ static struct crypto_pkt *encrypt_pkt(struct peer *peer,
 	cpkt = (struct crypto_pkt *)tal_arr(peer, char, *total_len);
 	iod->out.totlen += len;
 	cpkt->totlen = cpu_to_le64(iod->out.totlen);
-
+	
 	dout = cpkt->data;
 	EVP_EncryptUpdate(&iod->out.evpctx, dout, &outlen,
 			  memcheck(data, len), len);
@@ -293,48 +310,73 @@ struct io_plan *peer_write_packet(struct io_conn *conn,
 	return io_write(conn, iod->out.cpkt, totlen, next, peer);
 }
 
-struct key_negotiate {
-	struct peer *peer;
-	u8 seckey[32];
-
-	struct intro intro;
-	struct io_plan *(*cb)(struct io_conn *, struct peer *);
-};
-
-static struct io_plan *handshake_complete(struct io_conn *conn,
-					  struct key_negotiate *neg)
+static struct io_plan *check_proof(struct io_conn *conn, struct peer *peer)
 {
-	secp256k1_pubkey theirkey, sessionkey;
-	struct peer *peer = neg->peer;
+	struct key_negotiate *neg = peer->io_data->neg;
+	struct session_proof *proof = peer->inpkt;
+	secp256k1_pubkey theirid;
 	struct sha256 sha;
-	size_t outlen;
 	secp256k1_ecdsa_signature sig;
-	u8 shared_secret[32];
-	u8 serial_pubkey[33];
 	struct io_plan *(*cb)(struct io_conn *, struct peer *);
 
-	if (!secp256k1_ec_pubkey_parse(peer->state->secpctx, &theirkey,
-				       neg->intro.pubkey,
-				       sizeof(neg->intro.pubkey))) {
+	if (peer->inpkt_len < SESSION_PROOF_BASE_SIZE) {
+		log_unusual(peer->log, "Underlength proof packet %zu",
+			    peer->inpkt_len);
+		return io_close(conn);
+	}
+
+	if (!secp256k1_ec_pubkey_parse(peer->state->secpctx, &theirid,
+				       proof->pubkey, sizeof(proof->pubkey))) {
 		/* FIXME: Dump key in this case. */
 		log_unusual(peer->log, "Bad pubkey");
 		return io_close(conn);
 	}
 
-	if (!secp256k1_ec_pubkey_parse(peer->state->secpctx, &sessionkey,
-				       neg->intro.sessionkey,
-				       sizeof(neg->intro.sessionkey))) {
+	/* They should have sent back our session pubkey */
+	BUILD_ASSERT(sizeof(neg->our_sessionpubkey)==sizeof(proof->sessionkey));
+	if (memcmp(neg->our_sessionpubkey, proof->sessionkey,
+		   sizeof(proof->sessionkey)) != 0) {
 		/* FIXME: Dump key in this case. */
-		log_unusual(peer->log, "Bad sessionkey");
+		log_unusual(peer->log, "Bad sessionkey copy");
 		return io_close(conn);
 	}
 
-	sha256(&sha, &neg->intro, INTRO_SIZE - sizeof(neg->intro.signature));
+	sha256(&sha, (char *)proof + sizeof(proof->signature),
+	       peer->inpkt_len - sizeof(proof->signature));
 	/* FIXME: deserialize! */
-	memcpy(&sig, neg->intro.signature, sizeof(sig));
+	memcpy(&sig, proof->signature, sizeof(sig));
 	if (!secp256k1_ecdsa_verify(peer->state->secpctx, &sig, sha.u.u8,
-				    &theirkey)) {
+				    &theirid)) {
 		log_unusual(peer->log, "Bad signature");
+		return io_close(conn);
+	}
+
+	/* FIXME: Parse optdata! */
+
+	/* All complete, return to caller. */
+	cb = neg->cb;
+	peer->io_data->neg = tal_free(neg);
+	return cb(conn, peer);
+}
+
+static struct io_plan *receive_proof(struct io_conn *conn, struct peer *peer)
+{
+	return peer_read_packet(conn, peer, check_proof);
+}
+
+static struct io_plan *keys_exchanged(struct io_conn *conn, struct peer *peer)
+{
+	u8 shared_secret[32];
+	secp256k1_pubkey sessionkey;
+	size_t outlen;
+	struct session_proof proof;
+	struct key_negotiate *neg = peer->io_data->neg;
+
+	if (!secp256k1_ec_pubkey_parse(peer->state->secpctx, &sessionkey,
+				       neg->their_sessionpubkey,
+				       sizeof(neg->their_sessionpubkey))) {
+		/* FIXME: Dump key in this case. */
+		log_unusual(peer->log, "Bad sessionkey");
 		return io_close(conn);
 	}
 
@@ -345,32 +387,45 @@ static struct io_plan *handshake_complete(struct io_conn *conn,
 		return io_close(conn);
 	}
 
-	peer->io_data = tal(peer, struct io_data);
-
-	/* We need our serialized key again, for output crypto setup */
-	secp256k1_ec_pubkey_serialize(peer->state->secpctx,
-				      serial_pubkey, &outlen, &peer->state->id,
-				      SECP256K1_EC_COMPRESSED);
-	assert(outlen == sizeof(serial_pubkey));
-
-	/* Each side combines with their OWN pubkey to SENDING crypto. */
-	if (!setup_crypto(&peer->io_data->in, shared_secret, neg->intro.pubkey)
-	    || !setup_crypto(&peer->io_data->out, shared_secret, serial_pubkey)){
+	/* Each side combines with their OWN session key to SENDING crypto. */
+	if (!setup_crypto(&peer->io_data->in, shared_secret,
+			  neg->their_sessionpubkey)
+	    || !setup_crypto(&peer->io_data->out, shared_secret,
+			     neg->our_sessionpubkey)) {
 		log_unusual(peer->log, "Failed setup_crypto()");
 		return io_close(conn);
 	}
+
+	/* Now construct, sign and send the proof. */
+	secp256k1_ec_pubkey_serialize(peer->state->secpctx,
+				      proof.pubkey, &outlen, &peer->state->id,
+				      SECP256K1_EC_COMPRESSED);
+	assert(outlen == sizeof(proof.pubkey));
+	BUILD_ASSERT(sizeof(proof.sessionkey)
+		     == sizeof(neg->their_sessionpubkey));
+	memcpy(proof.sessionkey, neg->their_sessionpubkey,
+	       sizeof(proof.sessionkey));
+
+	/* This is the non-padded size. */
+	BUILD_ASSERT(SESSION_PROOF_BASE_SIZE
+		     == offsetof(struct session_proof, optdata));
+
+	privkey_sign(peer, (char *)&proof + sizeof(proof.signature),
+		     SESSION_PROOF_BASE_SIZE - sizeof(proof.signature),
+		     proof.signature);
 	
-	/* All complete, return to caller. */
-	cb = neg->cb;
-	tal_free(neg);
-	return cb(conn, peer);
+	/* We don't send any optdata */
+	return peer_write_packet(conn, peer, &proof, SESSION_PROOF_BASE_SIZE,
+				 receive_proof);
 }
 
-static struct io_plan *intro_receive(struct io_conn *conn,
-				     struct key_negotiate *neg)
+static struct io_plan *session_key_receive(struct io_conn *conn,
+					   struct peer *peer)
 {
-	/* Now read their intro. */
-	return io_read(conn, &neg->intro, INTRO_SIZE, handshake_complete, neg);
+	struct key_negotiate *neg = peer->io_data->neg;
+	/* Now read their key. */
+	return io_read(conn, neg->their_sessionpubkey,
+		       sizeof(neg->their_sessionpubkey), keys_exchanged, peer);
 }
 
 static void gen_sessionkey(secp256k1_context *ctx,
@@ -382,43 +437,28 @@ static void gen_sessionkey(secp256k1_context *ctx,
 			fatal("Could not get random bytes for sessionkey");
 	} while (!secp256k1_ec_pubkey_create(ctx, pubkey, seckey));
 }
-	
-/* FIXME: We should write out canned node info first, eg. what
- * services we offer. */
+
 struct io_plan *peer_crypto_setup(struct io_conn *conn, struct peer *peer,
 				  struct io_plan *(*cb)(struct io_conn *,
 							struct peer *))
 {
-	/* This looks like a crypto packet, so we can use the same thing
-	 * for key refresh or in connectionless protocols. */
-	struct key_negotiate *neg = tal(conn, struct key_negotiate);
 	size_t outputlen;
 	secp256k1_pubkey sessionkey;
+	struct key_negotiate *neg;
 
-	neg->peer = peer;
+	peer->io_data = tal(peer, struct io_data);
+
+	/* We store negotiation state here. */
+	neg = peer->io_data->neg = tal(peer->io_data, struct key_negotiate);
 	neg->cb = cb;
+
 	gen_sessionkey(peer->state->secpctx, neg->seckey, &sessionkey);
 
-	/* This is the non-padded size. */
-	BUILD_ASSERT(INTRO_SIZE <= sizeof(neg->intro));
-	BUILD_ASSERT(INTRO_SIZE
-		     == (offsetof(struct intro, signature)
-			 + sizeof(neg->intro.signature)));
-
 	secp256k1_ec_pubkey_serialize(peer->state->secpctx,
-				      neg->intro.pubkey, &outputlen,
-				      &peer->state->id,
-				      SECP256K1_EC_COMPRESSED);
-	assert(outputlen == sizeof(neg->intro.pubkey));
-	secp256k1_ec_pubkey_serialize(peer->state->secpctx,
-				      neg->intro.sessionkey, &outputlen,
+				      neg->our_sessionpubkey, &outputlen,
 				      &sessionkey,
 				      SECP256K1_EC_COMPRESSED);
-	assert(outputlen == sizeof(neg->intro.sessionkey));
-
-	privkey_sign(peer, &neg->intro,
-		     INTRO_SIZE - sizeof(neg->intro.signature),
-		     neg->intro.signature);
-
-	return io_write(conn, &neg->intro, INTRO_SIZE, intro_receive, neg);
+	assert(outputlen == sizeof(neg->our_sessionpubkey));
+	return io_write(conn, neg->our_sessionpubkey, outputlen,
+			session_key_receive, peer);
 }
