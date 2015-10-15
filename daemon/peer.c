@@ -21,25 +21,22 @@
 /* Send and receive (encrypted) hello message. */
 static struct io_plan *peer_test_check(struct io_conn *conn, struct peer *peer)
 {
-	if (le32_to_cpu(peer->inpkt->len) != 6)
-		fatal("Bad packet len %u", le32_to_cpu(peer->inpkt->len));
-	if (memcmp(peer->inpkt->data, "hello", 6) != 0)
-		fatal("Bad packet '%.6s'", peer->inpkt->data);
+	if (peer->inpkt_len != 6)
+		fatal("Bad packet len %zu", peer->inpkt_len);
+	if (memcmp(peer->inpkt, "hello", 6) != 0)
+		fatal("Bad packet '%.6s'", (char *)peer->inpkt);
 	log_info(peer->log, "Successful hello!");
 	return io_close(conn);
 }
 
 static struct io_plan *peer_test_read(struct io_conn *conn, struct peer *peer)
 {
-	return peer_read_packet(conn, peer, &peer->inpkt, peer_test_check);
+	return peer_read_packet(conn, peer, peer_test_check);
 }
 
 static struct io_plan *peer_test(struct io_conn *conn, struct peer *peer)
 {
-	struct pkt *p = (struct pkt *)tal_arr(conn, u8, sizeof(*p) + 6);
-	p->len = cpu_to_le32(6);
-	memcpy(p->data, "hello", 6);
-	return peer_write_packet(conn, peer, p, peer_test_read);
+	return peer_write_packet(conn, peer, "hello", 6, peer_test_read);
 }
 
 static u16 get_port(const struct netaddr *addr)

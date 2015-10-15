@@ -2,7 +2,6 @@
 #include "lightningd.h"
 #include "log.h"
 #include "peer.h"
-#include "pkt.h"
 #include "privkey.h"
 #include <ccan/build_assert/build_assert.h>
 #include <ccan/crypto/sha256/sha256.h>
@@ -137,16 +136,15 @@ struct io_data {
 	struct crypto_pkt hdr_in;
 };
 
-static struct pkt *decrypt_pkt(struct peer *peer, struct crypto_pkt *cpkt)
+static void *decrypt_pkt(struct peer *peer, struct crypto_pkt *cpkt, size_t *len)
 {
-	size_t len, full_len;
+	size_t full_len;
 	struct sha256 hmac;
-	struct pkt *pkt;
 	int outlen;
 	struct io_data *iod = peer->io_data;
 
-	len = le64_to_cpu(iod->hdr_in.totlen) - iod->in.totlen;
-	full_len = ROUNDUP(len, AES_BLOCK_SIZE);
+	*len = le64_to_cpu(iod->hdr_in.totlen) - iod->in.totlen;
+	full_len = ROUNDUP(*len, AES_BLOCK_SIZE);
 
 	HMAC(EVP_sha256(), iod->in.hmackey.k.u.u8, sizeof(iod->in.hmackey),
 	     (unsigned char *)&cpkt->totlen, sizeof(cpkt->totlen) + full_len,
@@ -162,25 +160,20 @@ static struct pkt *decrypt_pkt(struct peer *peer, struct crypto_pkt *cpkt)
 			  memcheck(cpkt->data, full_len), full_len);
 	assert(outlen == full_len);
 
-	pkt = (struct pkt *)tal_arr(peer, char, sizeof(*pkt) + len);
-	/* FIXME: Make this just u32, since it's not sent on wire! */
-	pkt->len = le32_to_cpu(len);
-	memcpy(pkt->data, cpkt->data, len);
-
-	return pkt;
+	return tal_dup_arr(peer, u8, cpkt->data, *len, 0);
 }
 
-static struct crypto_pkt *encrypt_pkt(struct peer *peer, const struct pkt *pkt,
+static struct crypto_pkt *encrypt_pkt(struct peer *peer,
+				      const void *data, size_t len,
 				      size_t *total_len)
 {
 	static unsigned char zeroes[AES_BLOCK_SIZE-1];
 	struct crypto_pkt *cpkt;
 	unsigned char *dout;
-	size_t len, full_len;
+	size_t full_len;
 	int outlen;
 	struct io_data *iod = peer->io_data;
 
-	len = le32_to_cpu(pkt->len);
 	full_len = ROUNDUP(len, AES_BLOCK_SIZE);
 	*total_len = sizeof(*cpkt) + full_len;
 
@@ -190,7 +183,7 @@ static struct crypto_pkt *encrypt_pkt(struct peer *peer, const struct pkt *pkt,
 
 	dout = cpkt->data;
 	EVP_EncryptUpdate(&iod->out.evpctx, dout, &outlen,
-			  memcheck(pkt->data, len), len);
+			  memcheck(data, len), len);
 	dout += outlen;
 
 	/* Now encrypt tail, padding with zeroes if necessary. */
@@ -260,18 +253,17 @@ static int do_read_packet(int fd, struct io_plan_arg *arg)
 	if (iod->len_in <= max)
 		return 0;
 
-	*((struct pkt **)arg->u2.vp) = decrypt_pkt(peer, iod->in.cpkt);
+	peer->inpkt = decrypt_pkt(peer, iod->in.cpkt, &peer->inpkt_len);
 	iod->in.cpkt = tal_free(iod->in.cpkt);
 
-	if (!*((struct pkt **)arg->u2.vp))
+	if (!peer->inpkt)
 		return -1;
-	iod->in.totlen += max;
+	iod->in.totlen += peer->inpkt_len;
 	return 1;
 }
 
 struct io_plan *peer_read_packet(struct io_conn *conn,
 				 struct peer *peer,
-				 struct pkt **pkt,
 				 struct io_plan *(*cb)(struct io_conn *,
 						       struct peer *))
 {
@@ -279,17 +271,15 @@ struct io_plan *peer_read_packet(struct io_conn *conn,
 
 	peer->io_data->len_in = 0;
 	arg->u1.vp = peer;
-	arg->u2.vp = pkt;
-
 	return io_set_plan(conn, IO_IN, do_read_packet,
 			   (struct io_plan *(*)(struct io_conn *, void *))cb,
 			   peer);
 }
 
-/* Caller must free pkt! */
+/* Caller must free data! */
 struct io_plan *peer_write_packet(struct io_conn *conn,
 				  struct peer *peer,
-				  const struct pkt *pkt,
+				  const void *data, size_t len,
 				  struct io_plan *(*next)(struct io_conn *,
 							  struct peer *))
 {
@@ -299,7 +289,7 @@ struct io_plan *peer_write_packet(struct io_conn *conn,
 	/* We free previous packet here, rather than doing indirection
 	 * via io_write */
 	tal_free(iod->out.cpkt);
-	iod->out.cpkt = encrypt_pkt(peer, pkt, &totlen);
+	iod->out.cpkt = encrypt_pkt(peer, data, len, &totlen);
 	return io_write(conn, iod->out.cpkt, totlen, next, peer);
 }
 

@@ -15,7 +15,8 @@ struct peer {
 	struct netaddr addr;
 
 	/* Current received packet. */
-	struct pkt *inpkt;
+	void *inpkt;
+	size_t inpkt_len;
 	
 	/* Current ongoing packetflow */
 	struct io_data *io_data;

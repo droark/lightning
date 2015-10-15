@@ -4,22 +4,21 @@
 #include <ccan/io/io.h>
 
 struct peer;
-struct pkt;
 
 struct io_plan *peer_crypto_setup(struct io_conn *conn,
 				  struct peer *peer,
 				  struct io_plan *(*cb)(struct io_conn *,
 							struct peer *));
 
+/* Reads packet into peer->inpkt/peer->inpkt_len */
 struct io_plan *peer_read_packet(struct io_conn *conn,
 				 struct peer *peer,
-				 struct pkt **pkt,
 				 struct io_plan *(*cb)(struct io_conn *,
 						       struct peer *));
 
 struct io_plan *peer_write_packet(struct io_conn *conn,
 				  struct peer *peer,
-				  const struct pkt *pkt,
+				  const void *data, size_t len,
 				  struct io_plan *(*next)(struct io_conn *,
 							  struct peer *));
 
